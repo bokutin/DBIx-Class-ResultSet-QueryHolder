@@ -53,52 +53,6 @@ sub bench_teng {
     }
 }
 
-#sub bench5 {
-#    my $schema = container('schema');
-#    my $dbh = $schema->storage->dbh;
-#
-#    my @artists = do {
-#        state $sth = do {
-#            my $query = $schema->resultset("Artist")->search(undef,{rows=>20})->as_query;
-#            my $sth = $dbh->prepare($$query->[0]);
-#            my $p_num = 1;
-#            $sth->bind_param($p_num++, $_) for map { $_->[1] } @{$$query}[1..$#{$$query}];
-#            $sth;
-#        };
-#        $sth->execute;
-#        @{ $sth->fetchall_arrayref({}) };
-#    };
-#    for my $artist (@artists) {
-#        my @albums = do {
-#            state $sth = do {
-#                my $query = $schema->resultset("Album")->search({artist_id=>$artist->{id}})->as_query;
-#                my $sth = $dbh->prepare($$query->[0]);
-#                my $p_num = 1;
-#                $sth->bind_param($p_num++, $_) for map { $_->[1] } @{$$query}[1..$#{$$query}];
-#                $sth;
-#            };
-#            $sth->execute;
-#            @{ $sth->fetchall_arrayref({}) };
-#        };
-#        for my $album (@albums) {
-#            my @covers = do {
-#                state $sth = do {
-#                    state $query = $schema->resultset("Cover")->search({album_id=>$album->{id}})->as_query;
-#                    my $sth = $dbh->prepare($$query->[0]);
-#                    my $p_num = 1;
-#                    $sth->bind_param($p_num++, $_) for map { $_->[1] } @{$$query}[1..$#{$$query}];
-#                    $sth;
-#                };
-#                $sth->execute;
-#                @{ $sth->fetchall_arrayref({}) };
-#            };
-#            for my $cover (@covers) {
-#                my $name = $cover->{name};
-#            }
-#        }
-#    }
-#}
-
 my %bench = (
     bench_dbic              => \&bench_dbic,
     bench_dbic_query_holder => \&bench_dbic_query_holder,
