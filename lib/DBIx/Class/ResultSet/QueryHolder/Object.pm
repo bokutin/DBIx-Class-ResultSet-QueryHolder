@@ -18,7 +18,6 @@ sub new {
     my $self = bless { @_ }, __PACKAGE__;
 
     weaken $self->{dbh};
-    $_->[0]{_changed} = 1 for $self->bind_specs;
 
     $self;
 }
