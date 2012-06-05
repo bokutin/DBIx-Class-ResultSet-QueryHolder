@@ -19,3 +19,23 @@ sub as_query_holder {
 }
 
 1;
+
+__END__
+
+=encoding utf-8
+
+=head1 NAME
+
+DBIx::Class::ResultSet::QueryHolder - $rs->as_queryを使いまわします
+
+=head1 SYNOPSIS
+
+=head1 AUTHOR
+
+Tomohiro Hosaka E<lt>bokutin@bokut.inE<gt>
+
+=head1 LICENSE
+
+Copyright (C) 2012 Tomohiro Hosaka All Rights Reserved.
+
+=cut
