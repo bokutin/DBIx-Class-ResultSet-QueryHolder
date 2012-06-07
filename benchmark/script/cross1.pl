@@ -9,6 +9,10 @@ use List::Util qw(max);
 use MyApp::Container qw(container);
 use SQL::Format;
 
+my @ARTIST_COLUMNS = (qw(id name), map { "column$_" } (1..10));
+my @ALBUM_COLUMNS  = (qw(id name artist_id), map { "column$_" } (1..20));
+my @COVER_COLUMNS  = (qw(id name album_id), map { "column$_" } (1..5));
+
 my $schema = container('schema');
 my $teng = container('teng');
 my $dbh = $schema->storage->dbh;
@@ -20,6 +24,68 @@ sub bench_dbic {
         my @covers = $album->covers({name=>"cover1"});
         die unless @covers == 1;
         my $id = $covers[0]->id or die;
+    }
+}
+
+sub bench_dm {
+    my $dm = container("dm");
+
+    my $artist = $dm->table("Artist")->select(
+        -columns   => \@ARTIST_COLUMNS,
+        -where     => { name => "artist1" },
+        -result_as => 'firstrow',
+    );
+    my $albums = $artist->albums(
+        -columns => \@ALBUM_COLUMNS,
+        -order_by => ['name'],
+    );
+    for my $album (@$albums) {
+        my $cover = $album->covers(
+            -columns   => \@COVER_COLUMNS,
+            -where     => { name => "cover1" },
+            -result_as => 'firstrow',
+        );
+        my $id = $cover->{id} or die;
+    }
+}
+
+sub bench_dm_sth {
+    my $dm = container("dm");
+
+    state $artist_stmt = $dm->table("Artist")->select(
+        -columns   => \@ARTIST_COLUMNS,
+        -where     => { name => "artist1" },
+        -result_as => 'fast_statement',
+    );
+    my $artist = do {
+        $artist_stmt->bind( name => "artist1" );
+        $artist_stmt->execute;
+        $artist_stmt->next;
+    };
+    state $albums_stmt = $artist->albums(
+        -columns => \@ALBUM_COLUMNS,
+        -order_by => ['name'],
+        -result_as => 'fast_statement',
+    );
+    my $albums = do {
+        $albums_stmt->bind( artist_id => $artist->{id} );
+        $albums_stmt->execute;
+        $albums_stmt->all;
+    };
+    for my $album (@$albums) {
+        die unless $album->{artist_id} == $artist->{id};
+        #die Dumper $album;
+        state $covers_stmt = $album->covers(
+            -columns   => \@COVER_COLUMNS,
+            -where     => { name => "cover1" },
+            -result_as => 'fast_statement',
+        );
+        my $cover = do {
+            $covers_stmt->bind( album_id => $album->{id} );
+            $covers_stmt->execute;
+            $covers_stmt->next;
+        };
+        my $id = $cover->{id} or die;
     }
 }
 
@@ -72,6 +138,84 @@ sub bench_dbic_as_query {
     }
 }
 
+sub bench_dbic_as_query_foul_sth {
+    my @artists = do {
+        state $sth = do {
+            my $query = $schema->resultset("Artist")->search({name=>"artist1"})->as_query;
+            my $sth = $dbh->prepare($$query->[0]);
+            $sth->bind_param($_, $$query->[$_][1]) for (1..$#{$$query});
+            $sth;
+        };
+        $sth->execute or die;
+        @{ $sth->fetchall_arrayref({}) };
+    };
+    for my $artist (@artists) {
+        my @albums = do {
+            state $sth = do {
+                my $query = $schema->resultset("Album")->search({artist_id=>$artist->{id}},{order_by=>"name"})->as_query;
+                my $sth = $dbh->prepare($$query->[0]);
+                $sth->bind_param($_, $$query->[$_][1]) for (1..$#{$$query});
+                $sth;
+            };
+            $sth->execute or die;
+            @{ $sth->fetchall_arrayref({}) };
+        };
+        for my $album (@albums) {
+            my @covers = do {
+                state $sth = do {
+                    my $query = $schema->resultset("Cover")->search({album_id=>$album->{id},name=>"cover1"})->as_query;
+                    my $sth = $dbh->prepare($$query->[0]);
+                    $sth->bind_param($_, $$query->[$_][1]) for (1..$#{$$query});
+                    $sth;
+                };
+                $sth->execute or die;
+                @{ $sth->fetchall_arrayref({}) };
+            };
+            die unless @covers == 1;
+            my $id = $covers[0]->{id} or die;
+        }
+    }
+}
+
+sub bench_dbic_as_query_foul_sth_no_slice {
+    my @artists = do {
+        state $sth = do {
+            my $query = $schema->resultset("Artist")->search({name=>"artist1"})->as_query;
+            my $sth = $dbh->prepare($$query->[0]);
+            $sth->bind_param($_, $$query->[$_][1]) for (1..$#{$$query});
+            $sth;
+        };
+        $sth->execute or die;
+        @{ $sth->fetchall_arrayref() };
+    };
+    for my $artist (@artists) {
+        my @albums = do {
+            state $sth = do {
+                my $query = $schema->resultset("Album")->search({artist_id=>$artist->[0]},{order_by=>"name"})->as_query;
+                my $sth = $dbh->prepare($$query->[0]);
+                $sth->bind_param($_, $$query->[$_][1]) for (1..$#{$$query});
+                $sth;
+            };
+            $sth->execute or die;
+            @{ $sth->fetchall_arrayref() };
+        };
+        for my $album (@albums) {
+            my @covers = do {
+                state $sth = do {
+                    my $query = $schema->resultset("Cover")->search({album_id=>$album->[0],name=>"cover1"})->as_query;
+                    my $sth = $dbh->prepare($$query->[0]);
+                    $sth->bind_param($_, $$query->[$_][1]) for (1..$#{$$query});
+                    $sth;
+                };
+                $sth->execute or die;
+                @{ $sth->fetchall_arrayref() };
+            };
+            die unless @covers == 1;
+            my $id = $covers[0]->[0] or die;
+        }
+    }
+}
+
 sub bench_teng {
     my $artist = $teng->single('artist',{name=>"artist1"}) or die;
     my @albums = $teng->search('album',{artist_id=>$artist->id});
@@ -85,7 +229,7 @@ sub bench_sqlf {
     local $SQL::Format::QUOTE_CHAR = '"';
     my $artist = do {
         my ($stmt, @bind) = sqlf 'SELECT %c FROM %t WHERE %w' => (
-            [qw(id name), map { "column$_" } (1..10)],
+            \@ARTIST_COLUMNS,
             'artist',
             {
                 name => "artist1",
@@ -97,7 +241,7 @@ sub bench_sqlf {
     } or die;
     my @albums = do {
         my ($stmt, @bind) = sqlf 'SELECT %c FROM %t WHERE %w %o' => (
-            [qw(id name artist_id), map { "column$_" } (1..20)],
+            \@ALBUM_COLUMNS,
             'album',
             {
                 artist_id => $artist->{id},
@@ -113,7 +257,7 @@ sub bench_sqlf {
     for my $album (@albums) {
         my $cover = do {
             my ($stmt, @bind) = sqlf 'SELECT %c FROM %t WHERE %w' => (
-                [qw(id name album_id), map { "column$_" } (1..5)],
+                \@COVER_COLUMNS,
                 'cover',
                 {
                     album_id => $album->{id},
@@ -132,7 +276,7 @@ sub bench_sqlf_sth {
     local $SQL::Format::QUOTE_CHAR = '"';
     my $artist = do {
         my ($stmt, @bind) = sqlf 'SELECT %c FROM %t WHERE %w' => (
-            [qw(id name), map { "column$_" } (1..10)],
+            \@ARTIST_COLUMNS,
             'artist',
             {
                 name => "artist1",
@@ -144,7 +288,7 @@ sub bench_sqlf_sth {
     } or die;
     my @albums = do {
         my ($stmt, @bind) = sqlf 'SELECT %c FROM %t WHERE %w %o' => (
-            [qw(id name artist_id), map { "column$_" } (1..20)],
+            \@ALBUM_COLUMNS,
             'album',
             {
                 artist_id => $artist->{id},
@@ -160,7 +304,7 @@ sub bench_sqlf_sth {
     for my $album (@albums) {
         my $cover = do {
             my ($stmt, @bind) = sqlf 'SELECT %c FROM %t WHERE %w' => (
-                [qw(id name album_id), map { "column$_" } (1..5)],
+                \@COVER_COLUMNS,
                 'cover',
                 {
                     album_id => $album->{id},
@@ -176,13 +320,17 @@ sub bench_sqlf_sth {
 }
 
 my %bench = (
-    bench_dbic              => \&bench_dbic,
-    bench_dbic_hashref      => \&bench_dbic_hashref,
-    bench_dbic_query_holder => \&bench_dbic_query_holder,
-    bench_dbic_as_query     => \&bench_dbic_as_query,
-    bench_teng              => \&bench_teng,
-    bench_sqlf              => \&bench_sqlf,
-    bench_sqlf_sth          => \&bench_sqlf_sth,
+    bench_dbic                            => \&bench_dbic,
+    bench_dbic_as_query                   => \&bench_dbic_as_query,
+    bench_dbic_as_query_foul_sth          => \&bench_dbic_as_query_foul_sth,
+    bench_dbic_as_query_foul_sth_no_slice => \&bench_dbic_as_query_foul_sth_no_slice,
+    bench_dbic_hashref                    => \&bench_dbic_hashref,
+    bench_dbic_query_holder               => \&bench_dbic_query_holder,
+    bench_dm                              => \&bench_dm,
+    bench_dm_sth                          => \&bench_dm_sth,
+    bench_sqlf                            => \&bench_sqlf,
+    bench_sqlf_sth                        => \&bench_sqlf_sth,
+    bench_teng                            => \&bench_teng,
 );
 
 for my $name (sort keys %bench) {
@@ -198,10 +346,14 @@ for my $name (sort keys %bench) {
 }
 
 #foil bokutin % perl benchmark/script/cross1.pl
-#             bench_dbic:  2 wallclock secs ( 1.96 usr +  0.04 sys =  2.00 CPU) @ 21.00/s (n=42)
-#    bench_dbic_as_query:  3 wallclock secs ( 1.89 usr +  0.14 sys =  2.03 CPU) @ 128.57/s (n=261)
-#     bench_dbic_hashref:  3 wallclock secs ( 2.20 usr +  0.04 sys =  2.24 CPU) @ 26.79/s (n=60)
-#bench_dbic_query_holder:  4 wallclock secs ( 1.93 usr +  0.15 sys =  2.08 CPU) @ 137.50/s (n=286)
-#             bench_sqlf:  4 wallclock secs ( 1.85 usr +  0.25 sys =  2.10 CPU) @ 95.24/s (n=200)
-#         bench_sqlf_sth:  2 wallclock secs ( 1.94 usr +  0.14 sys =  2.08 CPU) @ 134.62/s (n=280)
-#             bench_teng:  4 wallclock secs ( 1.93 usr +  0.20 sys =  2.13 CPU) @ 70.42/s (n=150)
+#                           bench_dbic:  2 wallclock secs ( 2.03 usr +  0.03 sys =  2.06 CPU) @  20.87/s (n=43)
+#                  bench_dbic_as_query:  4 wallclock secs ( 2.06 usr +  0.16 sys =  2.22 CPU) @ 127.48/s (n=283)
+#         bench_dbic_as_query_foul_sth:  4 wallclock secs ( 1.91 usr +  0.18 sys =  2.09 CPU) @ 169.38/s (n=354)
+#bench_dbic_as_query_foul_sth_no_slice:  5 wallclock secs ( 1.71 usr +  0.30 sys =  2.01 CPU) @ 320.40/s (n=644)
+#                   bench_dbic_hashref:  3 wallclock secs ( 2.08 usr +  0.04 sys =  2.12 CPU) @  26.89/s (n=57)
+#              bench_dbic_query_holder:  4 wallclock secs ( 1.94 usr +  0.16 sys =  2.10 CPU) @ 136.19/s (n=286)
+#                             bench_dm:  3 wallclock secs ( 2.08 usr +  0.12 sys =  2.20 CPU) @  39.09/s (n=86)
+#                         bench_dm_sth:  3 wallclock secs ( 1.93 usr +  0.18 sys =  2.11 CPU) @ 170.14/s (n=359)
+#                           bench_sqlf:  4 wallclock secs ( 1.81 usr +  0.27 sys =  2.08 CPU) @  96.15/s (n=200)
+#                       bench_sqlf_sth:  3 wallclock secs ( 2.02 usr +  0.15 sys =  2.17 CPU) @ 138.25/s (n=300)
+#                           bench_teng:  4 wallclock secs ( 1.94 usr +  0.21 sys =  2.15 CPU) @  69.77/s (n=150)
