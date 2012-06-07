@@ -9,13 +9,14 @@ use List::Util qw(max);
 use MyApp::Container qw(container);
 use SQL::Format;
 
-my @ARTIST_COLUMNS = (qw(id name), map { "column$_" } (1..10));
-my @ALBUM_COLUMNS  = (qw(id name artist_id), map { "column$_" } (1..20));
-my @COVER_COLUMNS  = (qw(id name album_id), map { "column$_" } (1..5));
+my @ARTIST_COLUMNS = (qw(id name created_at updated_at),           map { "column$_" } (1..10));
+my @ALBUM_COLUMNS  = (qw(id name created_at updated_at artist_id), map { "column$_" } (1..20));
+my @COVER_COLUMNS  = (qw(id name created_at updated_at album_id),  map { "column$_" } (1..5));
 
 my $schema = container('schema');
 my $teng = container('teng');
 my $dbh = $schema->storage->dbh;
+my $dm = container("dm");
 
 sub bench_dbic {
     my $artist = $schema->resultset("Artist")->find({name=>"artist1"}) or die;
@@ -28,8 +29,6 @@ sub bench_dbic {
 }
 
 sub bench_dm {
-    my $dm = container("dm");
-
     my $artist = $dm->table("Artist")->select(
         -where     => { name => "artist1" },
         -result_as => 'firstrow',
@@ -46,9 +45,25 @@ sub bench_dm {
     }
 }
 
-sub bench_dm_sth {
-    my $dm = container("dm");
+sub bench_dm_hand_join {
+    my $artist = $dm->table("Artist")->select(
+        -where     => { name => "artist1" },
+        -result_as => 'firstrow',
+    );
+    my $albums = $dm->table("Album")->select(
+        -where    => { artist_id => $artist->{id} },
+        -order_by => ['name'],
+    );
+    for my $album (@$albums) {
+        my $cover = $dm->table("Cover")->select(
+            -where     => { album_id => $album->{id}, name => "cover1" },
+            -result_as => 'firstrow',
+        );
+        my $id = $cover->{id} or die;
+    }
+}
 
+sub bench_dm_sth {
     my $name = do {
         state $count = 0;
         "artist" . ( 1 + $count++%2 );
@@ -206,11 +221,22 @@ sub bench_dbic_as_query_foul_sth_no_slice {
 }
 
 sub bench_teng {
+    $teng->suppress_row_objects(0);
     my $artist = $teng->single('artist',{name=>"artist1"}) or die;
-    my @albums = $teng->search('album',{artist_id=>$artist->id});
+    my @albums = $teng->search('album',{artist_id=>$artist->id},{order_by=>"name"});
     for my $album (@albums) {
         my $cover = $teng->single('cover',{album_id=>$album->id,name=>"cover1"}) or die;
         my $id = $cover->id or die;
+    }
+}
+
+sub bench_teng_suppress_row_objects {
+    $teng->suppress_row_objects(1);
+    my $artist = $teng->single('artist',{name=>"artist1"}) or die;
+    my @albums = $teng->search('album',{artist_id=>$artist->{id}},{order_by=>"name"});
+    for my $album (@albums) {
+        my $cover = $teng->single('cover',{album_id=>$album->{id},name=>"cover1"}) or die;
+        my $id = $cover->{id} or die;
     }
 }
 
@@ -316,10 +342,12 @@ my %bench = (
     bench_dbic_hashref                    => \&bench_dbic_hashref,
     bench_dbic_query_holder               => \&bench_dbic_query_holder,
     bench_dm                              => \&bench_dm,
+    bench_dm_hand_join                    => \&bench_dm_hand_join,
     bench_dm_sth                          => \&bench_dm_sth,
     bench_sqlf                            => \&bench_sqlf,
     bench_sqlf_sth                        => \&bench_sqlf_sth,
     bench_teng                            => \&bench_teng,
+    bench_teng_suppress_row_objects       => \&bench_teng_suppress_row_objects,
 );
 
 for my $name (sort keys %bench) {
@@ -328,21 +356,25 @@ for my $name (sort keys %bench) {
 
 my $name_width = max(map { length } keys %bench);
 
+#DB::enable_profile;
 for my $name (sort keys %bench) {
     my $time = 2;
     my $t = countit($time, $bench{$name});
     say sprintf("%${name_width}s: %s", $name, timestr($t));
 }
+#DB::disable_profile;
 
 #foil bokutin % perl benchmark/script/cross1.pl
-#                           bench_dbic:  2 wallclock secs ( 2.10 usr +  0.04 sys =  2.14 CPU) @  21.03/s (n=45)
-#                  bench_dbic_as_query:  4 wallclock secs ( 1.96 usr +  0.13 sys =  2.09 CPU) @ 129.19/s (n=270)
-#         bench_dbic_as_query_foul_sth:  4 wallclock secs ( 1.92 usr +  0.17 sys =  2.09 CPU) @ 171.77/s (n=359)
-#bench_dbic_as_query_foul_sth_no_slice:  6 wallclock secs ( 1.87 usr +  0.31 sys =  2.18 CPU) @ 323.85/s (n=706)
-#                   bench_dbic_hashref:  3 wallclock secs ( 2.08 usr +  0.04 sys =  2.12 CPU) @  26.89/s (n=57)
-#              bench_dbic_query_holder:  3 wallclock secs ( 1.92 usr +  0.15 sys =  2.07 CPU) @ 138.16/s (n=286)
-#                             bench_dm:  3 wallclock secs ( 2.01 usr +  0.12 sys =  2.13 CPU) @  38.97/s (n=83)
-#                         bench_dm_sth:  3 wallclock secs ( 1.95 usr +  0.14 sys =  2.09 CPU) @ 133.97/s (n=280)
-#                           bench_sqlf:  4 wallclock secs ( 1.89 usr +  0.27 sys =  2.16 CPU) @  97.22/s (n=210)
-#                       bench_sqlf_sth:  3 wallclock secs ( 2.00 usr +  0.14 sys =  2.14 CPU) @ 139.72/s (n=299)
-#                           bench_teng:  3 wallclock secs ( 1.92 usr +  0.19 sys =  2.11 CPU) @  70.62/s (n=149)
+#                           bench_dbic:  2 wallclock secs ( 1.97 usr +  0.03 sys =  2.00 CPU) @  21.00/s (n=42)
+#                  bench_dbic_as_query:  4 wallclock secs ( 2.03 usr +  0.14 sys =  2.17 CPU) @ 128.57/s (n=279)
+#         bench_dbic_as_query_foul_sth:  4 wallclock secs ( 1.91 usr +  0.17 sys =  2.08 CPU) @ 169.71/s (n=353)
+#bench_dbic_as_query_foul_sth_no_slice:  6 wallclock secs ( 1.79 usr +  0.31 sys =  2.10 CPU) @ 323.33/s (n=679)
+#                   bench_dbic_hashref:  3 wallclock secs ( 1.98 usr +  0.04 sys =  2.02 CPU) @  26.73/s (n=54)
+#              bench_dbic_query_holder:  3 wallclock secs ( 2.02 usr +  0.15 sys =  2.17 CPU) @ 138.25/s (n=300)
+#                             bench_dm:  3 wallclock secs ( 2.05 usr +  0.12 sys =  2.17 CPU) @  41.47/s (n=90)
+#                   bench_dm_hand_join:  3 wallclock secs ( 2.02 usr +  0.13 sys =  2.15 CPU) @  44.19/s (n=95)
+#                         bench_dm_sth:  3 wallclock secs ( 1.98 usr +  0.14 sys =  2.12 CPU) @ 123.58/s (n=262)
+#                           bench_sqlf:  4 wallclock secs ( 1.88 usr +  0.25 sys =  2.13 CPU) @  91.55/s (n=195)
+#                       bench_sqlf_sth:  3 wallclock secs ( 2.03 usr +  0.13 sys =  2.16 CPU) @ 129.17/s (n=279)
+#                           bench_teng:  4 wallclock secs ( 1.92 usr +  0.20 sys =  2.12 CPU) @  70.28/s (n=149)
+#      bench_teng_suppress_row_objects:  4 wallclock secs ( 1.91 usr +  0.22 sys =  2.13 CPU) @  78.40/s (n=167)
