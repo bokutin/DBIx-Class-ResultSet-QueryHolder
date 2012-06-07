@@ -3,7 +3,6 @@ package MyApp::Container;
 use strict;
 use warnings;
 
-use Class::Load qw(load_class);
 use File::Spec::Functions ':ALL';
 use Object::Container '-base';
 
@@ -16,12 +15,9 @@ register "config" => sub {
 register "dm" => sub {
     my $self = shift;
 
-    my $class = "MyApp::DataModel::Schema";
+    require MyApp::DataModel::Schema;
     my $dbh = $self->get("schema")->storage->dbh;
-
-    load_class($class);
-    $class->dbh($dbh);
-    $class;
+    MyApp::DataModel::Schema->new( dbh => $dbh );
 };
 
 register "dtx" => sub {
