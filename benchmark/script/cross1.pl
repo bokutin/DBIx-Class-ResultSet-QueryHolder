@@ -31,17 +31,14 @@ sub bench_dm {
     my $dm = container("dm");
 
     my $artist = $dm->table("Artist")->select(
-        -columns   => \@ARTIST_COLUMNS,
         -where     => { name => "artist1" },
         -result_as => 'firstrow',
     );
     my $albums = $artist->albums(
-        -columns => \@ALBUM_COLUMNS,
         -order_by => ['name'],
     );
     for my $album (@$albums) {
         my $cover = $album->covers(
-            -columns   => \@COVER_COLUMNS,
             -where     => { name => "cover1" },
             -result_as => 'firstrow',
         );
@@ -57,7 +54,6 @@ sub bench_dm_sth {
         "artist" . ( 1 + $count++%2 );
     };
     state $artist_stmt = $dm->table("Artist")->select(
-        -columns   => \@ARTIST_COLUMNS,
         -where     => { name => "?:name" },
         -result_as => 'fast_statement',
     );
@@ -68,15 +64,13 @@ sub bench_dm_sth {
     };
     die unless $artist->{name} eq $name;
     state $albums_stmt = $dm->table("Artist")->join("albums")->prepare(
-        -columns => \@ALBUM_COLUMNS,
         -order_by => ['name'],
     );
     my $albums = $albums_stmt->execute($artist)->all;
     for my $album (@$albums) {
         die unless $album->{artist_id} == $artist->{id};
         state $covers_stmt = $dm->table("Album")->join("covers")->prepare(
-            -columns   => \@COVER_COLUMNS,
-            -where     => { name => "cover1" },
+            -where => { name => "cover1" },
         );
         my $cover = $covers_stmt->execute($album)->next;
         my $id = $cover->{id} or die;
