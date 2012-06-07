@@ -93,6 +93,45 @@ sub bench_dm_sth {
     }
 }
 
+sub bench_dm_sth_hand_join_no_slice {
+    my $name = do {
+        state $count = 0;
+        "artist" . ( 1 + $count++%2 );
+    };
+    state $artist_stmt = $dm->table("Artist")->select(
+        -where     => { name => "?:name" },
+        -result_as => 'fast_statement',
+    );
+    my $artist = do {
+        $artist_stmt->bind( name => $name );
+        $artist_stmt->execute;
+        $artist_stmt->{sth}->fetchrow_arrayref;
+    };
+    die unless $artist->[1] eq $name;
+    state $albums_stmt = $dm->table("Artist")->join("albums")->prepare(
+        -order_by => ['name'],
+    );
+    my $albums = do {
+        $albums_stmt->bind( id => $artist->[0] );
+        $albums_stmt->execute;
+        $albums_stmt->{sth}->fetchall_arrayref;
+    };
+    die unless @$albums == 20;
+    for my $album (@$albums) {
+        die unless $album->[4] == $artist->[0];
+        state $covers_stmt = $dm->table("Album")->join("covers")->prepare(
+            -where => { name => "cover1" },
+        );
+        my $cover = do {
+            $covers_stmt->bind( id => $album->[0] );
+            $covers_stmt->execute;
+            $covers_stmt->{sth}->fetchrow_arrayref;
+        };
+        my $id = $cover->[0] or die;
+        die unless $cover->[4] == $album->[0];
+    }
+}
+
 sub bench_dbic_hashref {
     my $artist = $schema->resultset("Artist")->search({name=>"artist1"})->hashref_first or die;
     my @albums = $schema->resultset("Album")->search({artist_id=>$artist->{id}},{order_by=>"name"})->hashref_array;
@@ -344,6 +383,7 @@ my %bench = (
     bench_dm                              => \&bench_dm,
     bench_dm_hand_join                    => \&bench_dm_hand_join,
     bench_dm_sth                          => \&bench_dm_sth,
+    bench_dm_sth_hand_join_no_slice       => \&bench_dm_sth_hand_join_no_slice,
     bench_sqlf                            => \&bench_sqlf,
     bench_sqlf_sth                        => \&bench_sqlf_sth,
     bench_teng                            => \&bench_teng,
@@ -365,16 +405,17 @@ for my $name (sort keys %bench) {
 #DB::disable_profile;
 
 #foil bokutin % perl benchmark/script/cross1.pl
-#                           bench_dbic:  2 wallclock secs ( 1.97 usr +  0.03 sys =  2.00 CPU) @  21.00/s (n=42)
-#                  bench_dbic_as_query:  4 wallclock secs ( 2.03 usr +  0.14 sys =  2.17 CPU) @ 128.57/s (n=279)
-#         bench_dbic_as_query_foul_sth:  4 wallclock secs ( 1.91 usr +  0.17 sys =  2.08 CPU) @ 169.71/s (n=353)
-#bench_dbic_as_query_foul_sth_no_slice:  6 wallclock secs ( 1.79 usr +  0.31 sys =  2.10 CPU) @ 323.33/s (n=679)
-#                   bench_dbic_hashref:  3 wallclock secs ( 1.98 usr +  0.04 sys =  2.02 CPU) @  26.73/s (n=54)
-#              bench_dbic_query_holder:  3 wallclock secs ( 2.02 usr +  0.15 sys =  2.17 CPU) @ 138.25/s (n=300)
-#                             bench_dm:  3 wallclock secs ( 2.05 usr +  0.12 sys =  2.17 CPU) @  41.47/s (n=90)
-#                   bench_dm_hand_join:  3 wallclock secs ( 2.02 usr +  0.13 sys =  2.15 CPU) @  44.19/s (n=95)
-#                         bench_dm_sth:  3 wallclock secs ( 1.98 usr +  0.14 sys =  2.12 CPU) @ 123.58/s (n=262)
-#                           bench_sqlf:  4 wallclock secs ( 1.88 usr +  0.25 sys =  2.13 CPU) @  91.55/s (n=195)
-#                       bench_sqlf_sth:  3 wallclock secs ( 2.03 usr +  0.13 sys =  2.16 CPU) @ 129.17/s (n=279)
-#                           bench_teng:  4 wallclock secs ( 1.92 usr +  0.20 sys =  2.12 CPU) @  70.28/s (n=149)
-#      bench_teng_suppress_row_objects:  4 wallclock secs ( 1.91 usr +  0.22 sys =  2.13 CPU) @  78.40/s (n=167)
+#                           bench_dbic:  2 wallclock secs ( 2.15 usr +  0.03 sys =  2.18 CPU) @  21.10/s (n=46)
+#                  bench_dbic_as_query:  4 wallclock secs ( 1.94 usr +  0.14 sys =  2.08 CPU) @ 128.37/s (n=267)
+#         bench_dbic_as_query_foul_sth:  4 wallclock secs ( 1.90 usr +  0.17 sys =  2.07 CPU) @ 170.53/s (n=353)
+#bench_dbic_as_query_foul_sth_no_slice:  6 wallclock secs ( 1.79 usr +  0.30 sys =  2.09 CPU) @ 323.44/s (n=676)
+#                   bench_dbic_hashref:  2 wallclock secs ( 2.08 usr +  0.04 sys =  2.12 CPU) @  26.89/s (n=57)
+#              bench_dbic_query_holder:  4 wallclock secs ( 2.03 usr +  0.15 sys =  2.18 CPU) @ 138.07/s (n=301)
+#                             bench_dm:  3 wallclock secs ( 2.04 usr +  0.12 sys =  2.16 CPU) @  41.67/s (n=90)
+#                   bench_dm_hand_join:  3 wallclock secs ( 2.03 usr +  0.14 sys =  2.17 CPU) @  43.78/s (n=95)
+#                         bench_dm_sth:  3 wallclock secs ( 1.99 usr +  0.13 sys =  2.12 CPU) @ 123.58/s (n=262)
+#      bench_dm_sth_hand_join_no_slice:  4 wallclock secs ( 1.83 usr +  0.26 sys =  2.09 CPU) @ 283.25/s (n=592)
+#                           bench_sqlf:  4 wallclock secs ( 1.84 usr +  0.25 sys =  2.09 CPU) @  91.39/s (n=191)
+#                       bench_sqlf_sth:  3 wallclock secs ( 1.94 usr +  0.13 sys =  2.07 CPU) @ 128.99/s (n=267)
+#                           bench_teng:  4 wallclock secs ( 1.94 usr +  0.20 sys =  2.14 CPU) @  70.09/s (n=150)
+#      bench_teng_suppress_row_objects:  4 wallclock secs ( 1.87 usr +  0.22 sys =  2.09 CPU) @  78.47/s (n=164)
