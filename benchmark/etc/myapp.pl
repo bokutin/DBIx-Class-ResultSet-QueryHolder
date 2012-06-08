@@ -1,4 +1,12 @@
 +{
+    rose => {
+        driver   => 'pg',
+        database => 'myapp',
+        host     => 'localhost',
+        username => 'foo',
+        password => '',
+    },
+
     "Model::DBIC" => {
         connect_info => {
             dsn => "dbi:Pg:dbname=myapp",
